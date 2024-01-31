@@ -4,11 +4,8 @@ mod events;
 mod structs;
 
 use events::*;
+use structs::Data;
 use dotenv::dotenv;
-use structs::{
-    Data,
-    Error
-};
 use std::env::var;
 use poise::{
     FrameworkOptions,
@@ -17,10 +14,6 @@ use poise::{
         GatewayIntents
     }
 };
-
-#[allow(unused)]
-type Context<'a> = poise::Context<'a, Data, Error>;
-
 
 
 #[tokio::main]
