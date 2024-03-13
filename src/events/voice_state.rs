@@ -19,7 +19,7 @@ use poise::serenity_prelude::{
 };
 use rs_voice_controller::{
     establish_connection,
-    models::{NewVoicesInfo, VoicesInfo},
+    models::NewVoicesInfo,
     schema::voices_info::dsl::*
 };
 use diesel::{
@@ -98,10 +98,9 @@ pub async fn voice_state_update(
                 owner_id: &member.user.id.to_string(),
             };
 
-            let test = insert_into(rs_voice_controller::schema::voices_info::table)
+            _ = insert_into(rs_voice_controller::schema::voices_info::table)
                 .values(&new_voice_info)
-                .execute(connection)
-                .unwrap();
+                .execute(connection);
 
         }
         return Ok(());
