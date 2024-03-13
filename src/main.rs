@@ -1,12 +1,8 @@
-extern crate dotenv;
-
 mod events;
 mod structs;
 
 use events::*;
 use structs::Data;
-use dotenv::dotenv;
-use std::env::var;
 use poise::{
     FrameworkOptions,
     serenity_prelude::{
@@ -14,14 +10,16 @@ use poise::{
         GatewayIntents
     }
 };
+use std::env::var;
 
 
 #[tokio::main]
 async fn main(){
-    dotenv().ok();
+    dotenvy::dotenv().ok();
     
     let token = var("DISCORD_TOKEN")
         .expect("Missing `DISCORD_TOKEN` env var");
+    
         
     let intents =
         GatewayIntents::non_privileged()

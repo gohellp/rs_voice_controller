@@ -17,6 +17,18 @@ use poise::serenity_prelude::{
         VoiceState
     }
 };
+use rs_voice_controller::{
+    establish_connection,
+    models::{NewVoicesInfo, VoicesInfo},
+    schema::voices_info::dsl::*
+};
+use diesel::{
+    dsl::exists,
+    prelude::*,
+    select,
+    delete,
+    insert_into
+};
 
 
 
@@ -37,16 +49,33 @@ pub async fn voice_state_update(
     let _parent_id = var("PARENT_CHANNEL_ID").unwrap_or(
             guild.channels(ctx).await?.get(&ChannelId::new(data.voice_id)).expect("voice channel").parent_id.unwrap().get().to_string()
         ).parse::<u64>().expect("u64 parent_id");
+
+    let connection = &mut establish_connection();
     
     //Disconnect
     if old.is_some() {
         let old_state_channel = old.as_ref().unwrap().channel_id.unwrap();
+        let _channel_id = old_state_channel.get();
     
-        if old_state_channel.get() != data.voice_id && new_state_channel.get() != old_state_channel.get() {
+        if _channel_id != data.voice_id && new_state_channel.get() != _channel_id {
+            
+            
             //Get some data from db
-            
-            
+            let voice_info_existence = select(exists(voices_info.filter(channel_id.eq(_channel_id.to_string()))))
+                .get_result(connection)
+                .unwrap();
+
+            if voice_info_existence {
+
+                _ = old_state_channel.delete(ctx.http()).await;
+
+                delete(voices_info.filter(channel_id.eq(_channel_id.to_string())))
+                    .execute(connection)
+                    .expect("Error deleting voices_info");
+            }
         }
+
+        return Ok(());
         
     //Connect
     } else {
@@ -55,17 +84,26 @@ pub async fn voice_state_update(
             
             let _channel_builder = 
                 CreateChannel::new(format(format_args!("{}'s channel", member.user.name)))
-                .category(_parent_id)
-                .kind(ChannelType::Voice)
-                .audit_log_reason(reason.as_str());
+                    .category(_parent_id)
+                    .kind(ChannelType::Voice)
+                    .audit_log_reason(reason.as_str());
             
             let new_channel = guild.id.create_channel(&ctx.http(), _channel_builder).await?;
             
-            _ = member.move_to_voice_channel(ctx.http(), new_channel.clone()).await?;
+            _ = member.move_to_voice_channel(ctx.http(), new_channel.clone()).await;
             
-            //Add send data to db
-        }
-    }
+            //Send data to db
+            let new_voice_info = NewVoicesInfo {
+                channel_id: &new_channel.id.to_string(),
+                owner_id: &member.user.id.to_string(),
+            };
 
-    return Ok(());
+            let test = insert_into(rs_voice_controller::schema::voices_info::table)
+                .values(&new_voice_info)
+                .execute(connection)
+                .unwrap();
+
+        }
+        return Ok(());
+    }
 }
