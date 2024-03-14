@@ -41,16 +41,16 @@ pub async fn voice_state_update(
 
     let data = framework_ctx.user_data;
 
-    let member = new.member.clone().unwrap();
-    let new_state_channel = new.channel_id.unwrap_or_default();
-    let guild = ctx.http.get_guild(GuildId::new(data.guild_id)).await?;
+    let member = &new.member.clone().unwrap();
+    let connection = &mut establish_connection();
+    let new_state_channel = &new.channel_id.unwrap_or_default();
+    let guild = &ctx.http.get_guild(GuildId::new(data.guild_id)).await?;
     
     //optional var
     let _parent_id = var("PARENT_CHANNEL_ID").unwrap_or(
             guild.channels(ctx).await?.get(&ChannelId::new(data.voice_id)).expect("voice channel").parent_id.unwrap().get().to_string()
         ).parse::<u64>().expect("u64 parent_id");
 
-    let connection = &mut establish_connection();
     
     //Disconnect
     if old.is_some() {
