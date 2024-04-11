@@ -8,8 +8,10 @@ publish = false
 
 [dependencies]
 anyhow = "1.0.79"
-diesel = { version = "2.1.4", features = ["sqlite"] }
+sqlx = {version = "0.7.4", features = ["runtime-tokio", "sqlite"]}
 dotenvy = "0.15.7"
 poise = "0.6.1"
-tokio = { version = "1.35.1", features = ["rt-multi-thread"] }
-libsqlite3-sys = { version = "^0", features = ["bundled"] }
+tokio = { version = "1.35.1", features = ["full"] }
+tracing = "0.1.40"
+tracing-subscriber = "0.3.18"
+rand = "0.8.5"
