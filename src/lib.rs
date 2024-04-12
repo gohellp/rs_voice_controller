@@ -19,8 +19,8 @@ pub async fn database_connect(db_url: &str) -> Result<SqlitePool,anyhow::Error> 
         IF NOT EXISTS
         voices_info (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            channel_id VARCHAR (25) NOT NULL,
-            owner_id VARCHAR (25) NOT NULL
+            channel_id VARCHAR (25) NOT NULL UNIQUE,
+            owner_id VARCHAR (25) NOT NULL UNIQUE
         );
     "#)
     .execute(&pool)

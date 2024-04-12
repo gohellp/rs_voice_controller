@@ -33,6 +33,14 @@ impl VoicesInfo {
             .unwrap()
     }
 
+    pub async fn get_by_owner_id(owner_id: String, pool: &SqlitePool) -> Self {
+        query_as::<_,Self>("SELECT * FROM voices_info WHERE owner_id = $1")
+            .bind(owner_id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
     #[inline]
     pub async fn change_owner(&self, new_owner: String, pool: &SqlitePool) -> Self {
         query_as::<_,Self>("UPDATE voices_info SET owner_id = $1 WHERE id = $2 RETURNING *")

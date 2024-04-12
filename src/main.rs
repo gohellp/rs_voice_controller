@@ -17,9 +17,7 @@ use std::env::var;
 #[tokio::main]
 async fn main(){
     dotenvy::dotenv().ok();
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::DEBUG)
-        .init();
+    tracing_subscriber::fmt::init();
     
     let token = var("DISCORD_TOKEN")
         .expect("Missing `DISCORD_TOKEN` env var");

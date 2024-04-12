@@ -1,13 +1,5 @@
-use std::{
-    env::var,
-    fmt::format
-};
-use crate::structs::{
-    Result,
-    FrameworkContext
-};
+use std::fmt::format;
 use poise::serenity_prelude::{
-    Context,
     CacheHttp,
     builder::CreateChannel,
     all::{
@@ -22,22 +14,36 @@ use rs_voice_controller::models::VoicesInfo;
 
 
 pub async fn voice_state_update(
-    framework_ctx: FrameworkContext<'_>,
-    ctx: &Context,
+    framework_ctx: crate::structs::FrameworkContext<'_>,
+    ctx: &poise::serenity_prelude::Context,
     old: Option<&VoiceState>,
     new: &VoiceState,
-) -> Result<()> {
+) -> crate::structs::Result<()> {
     let data = framework_ctx.user_data;
 
     let pool = data.pool.clone();
     let member = new.member.as_ref().unwrap();
     let new_state_channel = &new.channel_id.unwrap_or_default();
     let guild = &ctx.http.get_guild(GuildId::new(data.guild_id)).await?;
+
+    if guild.id.get()!=data.guild_id {
+        return Ok(());
+    }
     
     //optional var
-    let parent_id = var("PARENT_CHANNEL_ID").unwrap_or(
-            guild.channels(ctx).await?.get(&ChannelId::new(data.voice_id)).expect("voice channel").parent_id.unwrap().get().to_string()
-        ).parse::<u64>().expect("u64 parent_id");
+    let parent_id = std::env::var("PARENT_CHANNEL_ID")
+        .unwrap_or(
+            guild.channels(ctx)
+                .await?
+                .get(
+                    &ChannelId::new(data.voice_id)
+                )
+                .expect("voice channel")
+                .parent_id.unwrap()
+                .get()
+                .to_string()
+        ).parse::<u64>()
+        .expect("u64 parent_id");
 
     
     //Disconnect
@@ -51,7 +57,7 @@ pub async fn voice_state_update(
         if channel_id != data.voice_id && new_state_channel.get() != channel_id {
             
             //Get some data from db
-            let voice_info_wrapped= sqlx::query_as::<_,VoicesInfo>(
+            let voice_info_wrapped = sqlx::query_as::<_,VoicesInfo>(
                 "SELECT * FROM voices_info WHERE channel_id = $1"
             ).bind(channel_id.to_string())
             .fetch_optional(&pool)
@@ -99,9 +105,49 @@ pub async fn voice_state_update(
 
         //Is connecting was to the voice_start_channel?
         if new_state_channel.get() == data.voice_id {
-            let reason= format(format_args!("Caused by {}", member.user.name));
             
-            //Todo: Add check for existing row with this member and try to move his
+            let voice_info_wrapped = sqlx::query_as::<_,VoicesInfo>(
+                    "SELECT * FROM voices_info WHERE owner_id = $1"
+                )
+                .bind(member.user.id.to_string())
+                .fetch_optional(&pool)
+                .await?;
+
+            //Is member already have voice channel in own?
+            if voice_info_wrapped.is_some() {
+                let voice_info = voice_info_wrapped.as_ref().unwrap();
+
+                let channels =  guild.channels(ctx.http()).await?;
+                let old_channel_wrapped = channels
+                    .get(
+                        &ChannelId::new(
+                            voice_info.channel_id.parse::<u64>()
+                                .expect("Error in parse voice_info.channel_id")
+                        )
+                    );
+                
+                //Is it real?:D
+                if old_channel_wrapped.is_some() {
+                    let old_channel = old_channel_wrapped.unwrap();
+                    
+                    _ = member.move_to_voice_channel(ctx.http(), old_channel).await;
+                    
+
+                    tracing::info!("user {} moved to voice channel {}", member.user.id, old_channel.id);
+
+
+                    return Ok(());
+                } else {
+                    voice_info.delete(&pool).await?;
+
+                    tracing::info!("Deleted old voice info with id: {}", voice_info.id);
+                }
+
+                drop(channels);
+                drop(voice_info_wrapped);
+            }
+            
+            let reason= format(format_args!("User {} created voice chat", member.user.name));
 
             let channel_builder = 
                 CreateChannel::new(format(format_args!("{}'s channel", member.user.name)))
