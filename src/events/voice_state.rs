@@ -16,7 +16,7 @@ pub async fn voice_state_update(
 ) -> crate::structs::Result<()> {
     let data = framework_ctx.user_data;
 
-    let pool = data.pool.clone();
+    let pool = &data.pool;
     let member = new.member.as_ref().unwrap();
     let new_state_channel = &new.channel_id.unwrap_or_default();
     let guild = Guild::get(&ctx, data.guild_id).await?;
@@ -59,7 +59,7 @@ pub async fn voice_state_update(
             let voice_info_wrapped = sqlx::query_as::<_,VoicesInfo>(
                 "SELECT * FROM voices_info WHERE channel_id = $1"
             ).bind(channel_id.to_string())
-            .fetch_optional(&pool)
+            .fetch_optional(pool)
             .await?;
 
             //Is this channel was a child voice channel and is this member was the owner?
@@ -86,7 +86,7 @@ pub async fn voice_state_update(
                     let new_owner_id = members.choose(&mut rand::thread_rng()).unwrap();
                     let new_owner = new_owner_id.to_user(&ctx).await?;
 
-                    let new_voice_info = voice_info.change_owner(new_owner.id.to_string(), &pool).await;
+                    let new_voice_info = voice_info.change_owner(new_owner.id.to_string(), pool).await;
 
                     let permissions = vec![PermissionOverwrite {
                         allow: Permissions::MANAGE_CHANNELS | Permissions::MUTE_MEMBERS | Permissions:: DEAFEN_MEMBERS,
@@ -105,7 +105,7 @@ pub async fn voice_state_update(
                 } else {
 
                     _ = old_state_channel.delete(&ctx).await;
-                    _ = voice_info.delete(&pool).await?;
+                    _ = voice_info.delete(pool).await?;
 
                     tracing::info!("Deleted voice channel: {}", channel_id);
 
@@ -126,7 +126,7 @@ pub async fn voice_state_update(
                     "SELECT * FROM voices_info WHERE owner_id = $1"
                 )
                 .bind(member.user.id.to_string())
-                .fetch_optional(&pool)
+                .fetch_optional(pool)
                 .await?;
 
             //Is member already have voice channel in own?
@@ -154,33 +154,34 @@ pub async fn voice_state_update(
 
                     return Ok(());
                 } else {
-                    voice_info.delete(&pool).await?;
+                    voice_info.delete(pool).await?;
 
                     tracing::info!("Deleted old voice info with id: {}", voice_info.id);
                 }
-
-                drop(channels);
-                drop(voice_info_wrapped);
             }
+
+            let member_name = member.user.global_name.as_ref().unwrap_or(&member.user.name);
             
-            let reason= format(format_args!("User {} created voice chat", member.user.global_name.as_ref().unwrap_or(&member.user.name)));
+            let reason= format(format_args!("User {} created voice chat", member_name));
+
+            let permissions = vec![PermissionOverwrite {
+                allow: Permissions::MANAGE_CHANNELS | Permissions::MUTE_MEMBERS | Permissions:: DEAFEN_MEMBERS,
+                deny: Permissions::empty(),
+                kind: PermissionOverwriteType::Member(member.user.id)
+            }];
 
             let channel_builder = 
-                CreateChannel::new(format(format_args!("{}'s channel", member.user.global_name.as_ref().unwrap_or(&member.user.name))))
+                CreateChannel::new(format(format_args!("{}'s channel", member_name)))
                     .category(parent_id)
                     .kind(ChannelType::Voice)
-                    .permissions(vec![PermissionOverwrite {
-                        allow: Permissions::MANAGE_CHANNELS | Permissions::MUTE_MEMBERS | Permissions:: DEAFEN_MEMBERS,
-                        deny: Permissions::empty(),
-                        kind: PermissionOverwriteType::Member(member.user.id)
-                    }])
+                    .permissions(permissions)
                     .audit_log_reason(reason.as_str());
             
             let new_channel = guild.id.create_channel(&ctx, channel_builder).await?;
             
             tracing::debug!("Created voice channel {} in discord", new_channel.id);
             
-            _ = member.move_to_voice_channel(&ctx, new_channel.clone()).await;
+            _ = member.move_to_voice_channel(&ctx, new_channel.id).await;
             
             tracing::debug!("user {} moved to voice channel {}", member.user.id, new_channel.id);
             
@@ -188,7 +189,7 @@ pub async fn voice_state_update(
             let new_voice_info = VoicesInfo::new(
                 new_channel.id.to_string(),
                 member.user.id.to_string(),
-                &pool
+                pool
             ).await;
 
             tracing::info!("Created voice info with id: {}", new_voice_info.id);

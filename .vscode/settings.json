@@ -3,6 +3,7 @@
         "AUTOINCREMENT",
         "dotenv",
         "dotenvy",
+        "sqlite",
         "Sqlite",
         "sqlx",
         "tokio"
