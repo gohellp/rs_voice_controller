@@ -33,8 +33,14 @@ pub async fn event_handler(
                 .permissions(&ctx.cache)
                 .unwrap();
 
-            if !permissions.manage_channels() || !permissions.move_members() {
-                tracing::error!("Bot can't work without MANAGE_CHANNELS and MOVE_MEMBERS permission!!!");
+            if !(
+                    permissions.manage_channels()
+                    | permissions.move_members()
+                    | permissions.mute_members()
+                    | permissions.deafen_members()
+                )
+            {
+                tracing::error!("Bot can't work without MANAGE_CHANNELS, MOVE_MEMBERS, MUTE_MEMBERS and DEAFEN_MEMBERS permission!!!");
                 std::process::exit(1);
             }
         }

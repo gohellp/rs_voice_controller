@@ -1,13 +1,8 @@
 use std::fmt::format;
 use poise::serenity_prelude::{
-    CacheHttp,
-    builder::CreateChannel,
     all::{
-        GuildId,
-        ChannelId,
-        ChannelType,
-        VoiceState
-    }
+        ChannelId, ChannelType, VoiceState
+    }, builder::CreateChannel, EditChannel, Guild, PermissionOverwrite, PermissionOverwriteType, Permissions, UserId
 };
 use rand::seq::SliceRandom;
 use rs_voice_controller::models::VoicesInfo;
@@ -24,24 +19,28 @@ pub async fn voice_state_update(
     let pool = data.pool.clone();
     let member = new.member.as_ref().unwrap();
     let new_state_channel = &new.channel_id.unwrap_or_default();
-    let guild = &ctx.http.get_guild(GuildId::new(data.guild_id)).await?;
+    let guild = Guild::get(&ctx, data.guild_id).await?;
 
-    if guild.id.get()!=data.guild_id {
+    if new.guild_id.unwrap()!=data.guild_id {
         return Ok(());
     }
-    
+
     //optional var
     let parent_id = std::env::var("PARENT_CHANNEL_ID")
         .unwrap_or(
-            guild.channels(ctx)
-                .await?
-                .get(
-                    &ChannelId::new(data.voice_id)
-                )
-                .expect("voice channel")
-                .parent_id.unwrap()
-                .get()
-                .to_string()
+            {
+                let Some(guild) = ctx.cache.guild(data.guild_id) else {
+                    return Ok(());
+                };
+
+                guild.channels
+                    .get(&ChannelId::new(data.voice_id))
+                    .unwrap()
+                    .parent_id
+                    .unwrap()
+                    .to_string()
+
+            }
         ).parse::<u64>()
         .expect("u64 parent_id");
 
@@ -70,25 +69,42 @@ pub async fn voice_state_update(
             {
 
                 let voice_info = voice_info_wrapped.as_ref().unwrap();
-                let members = old_state_channel.to_channel(ctx.http())
-                    .await?
-                    .guild()
-                    .unwrap()
-                    .members(&ctx.cache)
-                    .unwrap();
+                let members: Vec<UserId> = {
+                    let Some(guild) = ctx.cache.guild(data.guild_id) else {
+                        return Ok(());
+                    };
+                  
+                    guild.voice_states
+                        .iter()
+                        .filter(|(_, state)| state.channel_id.is_some_and(|cid| cid == channel_id))
+                        .map(|(user_id, _)| *user_id)
+                        .collect()
+                  };
 
                 //Is there anyone here?
                 if members.len()>= 1 {
-                    let new_owner = members.choose(&mut rand::thread_rng()).unwrap();
+                    let new_owner_id = members.choose(&mut rand::thread_rng()).unwrap();
+                    let new_owner = new_owner_id.to_user(&ctx).await?;
 
-                    let new_voice_info = voice_info.change_owner(new_owner.user.id.to_string(), &pool).await;
+                    let new_voice_info = voice_info.change_owner(new_owner.id.to_string(), &pool).await;
+
+                    let permissions = vec![PermissionOverwrite {
+                        allow: Permissions::MANAGE_CHANNELS | Permissions::MUTE_MEMBERS | Permissions:: DEAFEN_MEMBERS,
+                        deny: Permissions::empty(),
+                        kind: PermissionOverwriteType::Member(new_owner.id)
+                    }];
+                    let builder = EditChannel::new()
+                        .name(format(format_args!("{}'s channel", new_owner.name)))
+                        .permissions(permissions);
+
+                    old_state_channel.edit( &ctx, builder).await?;
 
                     tracing::info!("Sets owner_id to: {} for voice channel: {}", new_voice_info.owner_id, new_voice_info.channel_id)
                 
                 //There is no one here :c
                 } else {
 
-                    _ = old_state_channel.delete(ctx.http()).await;
+                    _ = old_state_channel.delete(&ctx).await;
                     _ = voice_info.delete(&pool).await?;
 
                     tracing::info!("Deleted voice channel: {}", channel_id);
@@ -117,7 +133,7 @@ pub async fn voice_state_update(
             if voice_info_wrapped.is_some() {
                 let voice_info = voice_info_wrapped.as_ref().unwrap();
 
-                let channels =  guild.channels(ctx.http()).await?;
+                let channels =  guild.channels(&ctx).await?;
                 let old_channel_wrapped = channels
                     .get(
                         &ChannelId::new(
@@ -130,7 +146,7 @@ pub async fn voice_state_update(
                 if old_channel_wrapped.is_some() {
                     let old_channel = old_channel_wrapped.unwrap();
                     
-                    _ = member.move_to_voice_channel(ctx.http(), old_channel).await;
+                    _ = member.move_to_voice_channel(&ctx, old_channel).await;
                     
 
                     tracing::info!("user {} moved to voice channel {}", member.user.id, old_channel.id);
@@ -147,19 +163,24 @@ pub async fn voice_state_update(
                 drop(voice_info_wrapped);
             }
             
-            let reason= format(format_args!("User {} created voice chat", member.user.name));
+            let reason= format(format_args!("User {} created voice chat", member.user.global_name.as_ref().unwrap_or(&member.user.name)));
 
             let channel_builder = 
-                CreateChannel::new(format(format_args!("{}'s channel", member.user.name)))
+                CreateChannel::new(format(format_args!("{}'s channel", member.user.global_name.as_ref().unwrap_or(&member.user.name))))
                     .category(parent_id)
                     .kind(ChannelType::Voice)
+                    .permissions(vec![PermissionOverwrite {
+                        allow: Permissions::MANAGE_CHANNELS | Permissions::MUTE_MEMBERS | Permissions:: DEAFEN_MEMBERS,
+                        deny: Permissions::empty(),
+                        kind: PermissionOverwriteType::Member(member.user.id)
+                    }])
                     .audit_log_reason(reason.as_str());
             
-            let new_channel = guild.id.create_channel(&ctx.http(), channel_builder).await?;
+            let new_channel = guild.id.create_channel(&ctx, channel_builder).await?;
             
             tracing::debug!("Created voice channel {} in discord", new_channel.id);
             
-            _ = member.move_to_voice_channel(ctx.http(), new_channel.clone()).await;
+            _ = member.move_to_voice_channel(&ctx, new_channel.clone()).await;
             
             tracing::debug!("user {} moved to voice channel {}", member.user.id, new_channel.id);
             
