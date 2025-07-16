@@ -1,8 +1,10 @@
 mod events;
 mod structs;
+mod models;
+mod threads;
 
 use events::*;
-use rs_voice_controller::database_connect;
+use crate::structs::database_connect;
 use structs::Data;
 use poise::{
     FrameworkOptions,
@@ -18,7 +20,7 @@ use std::env::var;
 async fn main(){
     dotenvy::dotenv().ok();
     tracing_subscriber::fmt::init();
-    
+
     let token = var("DISCORD_TOKEN")
         .expect("Missing `DISCORD_TOKEN` env var");
 
@@ -38,7 +40,7 @@ async fn main(){
                 Ok(Data {
                     guild_id: var("GUILD_ID").expect("guild_id").parse::<u64>().expect("u64 guild_id"),
                     voice_id: var("GUILD_VOICE_ID").expect("voice_id").parse::<u64>().expect("u64 voice_id"),
-                    pool: pool
+                    pool
                 })
             })
         })
@@ -46,12 +48,12 @@ async fn main(){
             event_handler: |ctx, event, framework, _data| {
                 Box::pin(event_handler(ctx, event, framework))
             },
-            
+
             ..Default::default()
         })
         .build();
 
-    let mut client = ClientBuilder::new(token, intents) 
+    let mut client = ClientBuilder::new(token, intents)
         .framework(framework)
         .await
         .expect("Err creating client");

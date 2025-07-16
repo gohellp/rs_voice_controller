@@ -1,15 +1,15 @@
-mod voice_state;
+mod ready;
+mod voice_state_updated_connect;
+mod voice_state_updated_disconnect;
 
-use voice_state::*;
+use ready::ready;
+use voice_state_updated_connect::voice_state_update_connect;
+use voice_state_updated_disconnect::voice_state_update_disconnect;
 
 use crate::structs::{
-    Result,
-    FrameworkContext
+    FrameworkContext, Result
 };
-use poise::serenity_prelude::{
-    CacheHttp,
-    FullEvent as Event, GuildId
-};
+use poise::serenity_prelude::FullEvent as Event;
 
 
 pub async fn event_handler(
@@ -20,32 +20,11 @@ pub async fn event_handler(
     match event {
         Event::Ready { data_about_bot } => {
             tracing::info!("Logged in as {}", data_about_bot.user.name);
-            let permissions = &ctx.http
-                .get_guild(
-                    GuildId::new(framework_ctx.user_data.guild_id)
-                )
-                .await?
-                .member(
-                    ctx.http(),
-                    data_about_bot.user.id
-                ).
-                await?
-                .permissions(&ctx.cache)
-                .unwrap();
-
-            if !(
-                    permissions.manage_channels()
-                    | permissions.move_members()
-                    | permissions.mute_members()
-                    | permissions.deafen_members()
-                )
-            {
-                tracing::error!("Bot can't work without MANAGE_CHANNELS, MOVE_MEMBERS, MUTE_MEMBERS and DEAFEN_MEMBERS permission!!!");
-                std::process::exit(1);
-            }
+            ready(framework_ctx, ctx, data_about_bot).await?;
         }
         Event::VoiceStateUpdate { old, new } => {
-            _ = voice_state_update( framework_ctx, ctx, old.as_ref(), new).await;
+            voice_state_update_connect(framework_ctx, ctx, old.as_ref(), new).await?;
+            voice_state_update_disconnect(framework_ctx, ctx, old.as_ref(), new).await?;
         }
         _ => {},
     }
