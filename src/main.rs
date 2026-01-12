@@ -1,35 +1,30 @@
 mod events;
-mod structs;
 mod models;
+mod structs;
 mod threads;
+mod utils;
 
-use events::*;
 use crate::structs::database_connect;
-use structs::Data;
+use events::*;
 use poise::{
+    serenity_prelude::{ClientBuilder, GatewayIntents},
     FrameworkOptions,
-    serenity_prelude::{
-        ClientBuilder,
-        GatewayIntents
-    }
 };
 use std::env::var;
-
+use structs::Data;
 
 #[tokio::main]
-async fn main(){
+async fn main() {
     dotenvy::dotenv().ok();
     tracing_subscriber::fmt::init();
 
-    let token = var("DISCORD_TOKEN")
-        .expect("Missing `DISCORD_TOKEN` env var");
+    let token = var("DISCORD_TOKEN").expect("Missing `DISCORD_TOKEN` env var");
 
-    let pool = database_connect(
-        &var("DATABASE_URL").expect("Missing `DATABASE_URL` env var")
-    ).await.unwrap();
+    let pool = database_connect(&var("DATABASE_URL").expect("Missing `DATABASE_URL` env var"))
+        .await
+        .unwrap();
 
-    let intents =
-        GatewayIntents::non_privileged()
+    let intents = GatewayIntents::non_privileged()
         | GatewayIntents::GUILDS
         | GatewayIntents::GUILD_MEMBERS
         | GatewayIntents::GUILD_VOICE_STATES;
@@ -38,9 +33,15 @@ async fn main(){
         .setup(move |_ctx, _ready, _framework| {
             Box::pin(async move {
                 Ok(Data {
-                    guild_id: var("GUILD_ID").expect("guild_id").parse::<u64>().expect("u64 guild_id"),
-                    voice_id: var("GUILD_VOICE_ID").expect("voice_id").parse::<u64>().expect("u64 voice_id"),
-                    pool
+                    guild_id: var("GUILD_ID")
+                        .expect("guild_id")
+                        .parse::<u64>()
+                        .expect("u64 guild_id"),
+                    voice_id: var("GUILD_VOICE_ID")
+                        .expect("voice_id")
+                        .parse::<u64>()
+                        .expect("u64 voice_id"),
+                    pool,
                 })
             })
         })

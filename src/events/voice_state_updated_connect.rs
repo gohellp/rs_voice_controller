@@ -1,48 +1,53 @@
-use crate::models::{User, VoiceInfo};
+use crate::{
+    models::{User, VoiceInfo},
+    utils::*,
+};
 use poise::serenity_prelude::*;
-use rand::seq::IndexedRandom;
 use sqlx::query_as;
 
 pub async fn voice_state_update_connect(
     framework_ctx: crate::structs::FrameworkContext<'_>,
     ctx: &poise::serenity_prelude::Context,
-    old_wrapped: Option<&VoiceState>,
     new: &VoiceState,
 ) -> anyhow::Result<()> {
     let data = framework_ctx.user_data;
     let pool = &data.pool;
-    let member = &mut new.member.clone().unwrap();
+    let Some(member) = &mut new.member.clone() else {
+        tracing::error!("Member somehow is None in new: VoiceState");
+        return Ok(());
+    };
     let new_state_channel_id = &new.channel_id.unwrap_or_default();
-    let guild = Guild::get(&ctx, new.guild_id.unwrap()).await?;
+    let Some(new_guild_id) = new.guild_id else {
+        tracing::error!("GuildId somehow is None in new: VoiceState");
+        return Ok(());
+    };
+    let guild = Guild::get(&ctx, new_guild_id).await?;
 
     let start_id = framework_ctx.user_data.voice_id;
 
-    if new.guild_id.unwrap()!=data.guild_id {
+    if new_guild_id != data.guild_id {
         return Ok(());
     }
 
-    //optional var
     let parent_id = std::env::var("PARENT_CHANNEL_ID")
-        .unwrap_or(
-            {
-                let Some(guild) = ctx.cache.guild(data.guild_id) else {
-                    return Ok(());
-                };
+        .unwrap_or({
+            let Some(guild) = ctx.cache.guild(data.guild_id) else {
+                return Ok(());
+            };
 
-                guild.channels
-                    .get(&ChannelId::new(data.voice_id))
-                    .unwrap()
-                    .parent_id
-                    .unwrap()
-                    .to_string()
-
-            }
-        ).parse::<u64>()
+            guild
+                .channels
+                .get(&ChannelId::new(data.voice_id))
+                .unwrap()
+                .parent_id
+                .unwrap()
+                .to_string()
+        })
+        .parse::<u64>()
         .expect("u64 parent_id");
 
-    let user_info: User =
-        query_as(
-            r#"
+    let user_info: User = query_as(
+        r#"
             SELECT * FROM users WHERE id = $1
 
             UNION ALL
@@ -56,11 +61,11 @@ pub async fn voice_state_update_connect(
                 FROM users
                 WHERE id = $1
             );
-            "#
-        )
-        .bind(member.user.id.get().to_string())
-        .fetch_one(pool)
-        .await?;
+            "#,
+    )
+    .bind(member.user.id.get().to_string())
+    .fetch_one(pool)
+    .await?;
 
     tracing::debug!(
         "User connected to voice channel: {}",
@@ -77,87 +82,72 @@ pub async fn voice_state_update_connect(
             .fetch_optional(pool)
             .await?;
 
-    if let Some(old) = old_wrapped {
-        if let Some(old_channel_id) = old.channel_id {
-            if old_channel_id == *new_state_channel_id{
+    if let Some(voice_info) = voice_info_wrapped {
+        let channels: Vec<ChannelId> = {
+            let Some(guild_cache) = ctx.cache.guild(guild.id) else {
                 return Ok(());
-            }
-            if let Some(voice_info) = voice_info_wrapped {
-                if voice_info.voice_id == old_channel_id.get().to_string() {
-                    if user_info.return_to_owned_channel {
-                        member.move_to_voice_channel(ctx, old_channel_id).await?;
+            };
 
-                        tracing::info!(
-                            "user {} moved to voice channel {}",
-                            member.user.id,
-                            old_channel_id
-                        );
+            guild_cache
+                .channels
+                .iter()
+                .map(|(channel_id, _)| *channel_id)
+                .collect()
+        };
 
-                        return Ok(());
-                    } else {
-                        let members: Vec<UserId> = {
-                            let Some(guild) = ctx.cache.guild(guild.id) else {
-                                return Ok(());
-                            };
+        if channels.contains(&ChannelId::new(voice_info.voice_id.parse::<u64>()?)) {
+            let members_vi: Vec<UserId> = {
+                let Some(guild_cache) = ctx.cache.guild(guild.id) else {
+                    return Ok(());
+                };
 
-                            guild
-                                .voice_states
-                                .iter()
-                                .filter(
-                                    |(_, state)|
-                                        state.channel_id.is_some_and(
-                                            |cid|
-                                                cid == old_channel_id
-                                        )
-                                )
-                                .map(|(user_id, _)| *user_id)
-                                .collect()
-                        };
+                guild_cache
+                    .voice_states
+                    .iter()
+                    .filter(|(_, state)| {
+                        state
+                            .channel_id
+                            .is_some_and(|cid| cid.get().to_string() == voice_info.voice_id)
+                    })
+                    .map(|(uiser_id, _)| *uiser_id)
+                    .collect()
+            };
 
-                        if members.len() >= 1 {
-                            let new_owner_id = members.choose(
-                                &mut rand::rng()
-                            ).unwrap();
-                            let new_owner = new_owner_id.to_user(ctx).await?;
+            if members_vi.len() == 0 {
+                member
+                    .move_to_voice_channel(ctx.http(), voice_info.voice_id.parse::<u64>()?)
+                    .await?;
 
-                            let new_voice_info = voice_info
-                                .change_owner(new_owner.id.get().to_string(), &pool)
-                                .await;
+                tracing::debug!(
+                    "User {} returned to his channel {}",
+                    member.user.id,
+                    voice_info.voice_id
+                );
 
-                            let permissions = vec![PermissionOverwrite {
-                                allow: Permissions::MANAGE_CHANNELS
-                                    | Permissions::MUTE_MEMBERS
-                                    | Permissions::DEAFEN_MEMBERS,
-                                deny: Permissions::empty(),
-                                kind: PermissionOverwriteType::Member(new_owner.id),
-                            }];
-                            let name = format!("{}'s channel", new_owner.name);
-                            let builder = EditChannel::new()
-                                .name(name)
-                                .permissions(permissions);
+                return Ok(());
+            } else {
+                if user_info.return_to_owned_channel {
+                    member
+                        .move_to_voice_channel(ctx.http(), voice_info.voice_id.parse::<u64>()?)
+                        .await?;
 
-                            old_channel_id.edit(ctx, builder).await?;
-
-
-                            tracing::info!(
-                                "Sets owner_id to: {} for voice channel: {}",
-                                new_voice_info.owner_id,
-                                new_voice_info.voice_id
-                            )
-
-                        //There is no one here :c
-                        } else {
-                            old_channel_id.delete(ctx).await?;
-                            voice_info.delete(&pool).await?;
-
-                            tracing::info!("Deleted voice channel: {}", old_channel_id.get());
-                        }
-                    }
+                    tracing::debug!(
+                        "User {} returned to his channel {}",
+                        member.user.id,
+                        voice_info.voice_id
+                    );
+                } else {
+                    let channel_id = ChannelId::new(voice_info.voice_id.parse::<u64>()?);
+                    let new_owner = select_random_owner_id(&members_vi);
+                    change_owner(&ctx, &channel_id, *new_owner).await?;
+                    voice_info
+                        .change_owner(new_owner.get().to_string(), pool)
+                        .await;
+                    tracing::debug!("Owner of {} was changed to {}", channel_id, new_owner);
                 }
             }
         }
     }
-
 
     let reason = format!(
         "User {} created voice chat",
@@ -168,34 +158,32 @@ pub async fn voice_state_update_connect(
             .unwrap_or(&member.user.name)
     );
 
-    let channel_builder = CreateChannel::new(
-        format!(
-            "{}'s channel",
-            member
-                .user
-                .global_name
-                .as_ref()
-                .unwrap_or(&member.user.name)
-        )
-    ).category(parent_id)
-        .kind(ChannelType::Voice)
-        .permissions(vec![PermissionOverwrite {
-            allow: Permissions::MANAGE_CHANNELS
-                | Permissions::MUTE_MEMBERS
-                | Permissions::DEAFEN_MEMBERS,
-            deny: Permissions::empty(),
-            kind: PermissionOverwriteType::Member(member.user.id),
-        }])
-        .audit_log_reason(reason.as_str());
+    let channel_builder = CreateChannel::new(format!(
+        "{}'s channel",
+        member
+            .user
+            .global_name
+            .as_ref()
+            .unwrap_or(&member.user.name)
+    ))
+    .category(parent_id)
+    .kind(ChannelType::Voice)
+    .permissions(vec![PermissionOverwrite {
+        allow: Permissions::MANAGE_CHANNELS
+            | Permissions::MUTE_MEMBERS
+            | Permissions::DEAFEN_MEMBERS,
+        deny: Permissions::empty(),
+        kind: PermissionOverwriteType::Member(member.user.id),
+    }])
+    .audit_log_reason(reason.as_str());
 
-    let new_channel = guild.id.create_channel(
-        &ctx,
-        channel_builder
-    ).await?;
+    let new_channel = guild.id.create_channel(&ctx, channel_builder).await?;
 
     tracing::debug!("Created voice channel {} in discord", new_channel.id);
 
-    member.move_to_voice_channel(&ctx, new_channel.clone()).await?;
+    member
+        .move_to_voice_channel(&ctx, new_channel.clone())
+        .await?;
 
     tracing::debug!(
         "user {} moved to voice channel {}",
@@ -204,15 +192,14 @@ pub async fn voice_state_update_connect(
     );
 
     //Send data to db
-    let new_voice_info =
-        VoiceInfo::new(
-            new_channel.id.to_string(),
-            member.user.id.get().to_string(),
-            &pool
-        ).await;
+    let new_voice_info = VoiceInfo::new(
+        new_channel.id.get().to_string(),
+        member.user.id.get().to_string(),
+        &pool,
+    )
+    .await;
 
     tracing::info!("Created voice info with id: {}", new_voice_info.voice_id);
-
 
     Ok(())
 }
